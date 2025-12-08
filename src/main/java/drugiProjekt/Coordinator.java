@@ -9,6 +9,7 @@ import java.util.Scanner;
 public class Coordinator {
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String COMMAND_TOPIC = "Command";
+    private static final String REGISTER_TOPIC = "Register";
 
     private KafkaProducer<String, String> producer;
 
@@ -20,6 +21,7 @@ public class Coordinator {
 
         this.producer = new KafkaProducer<>(props);
     }
+
 
     public void sendStartCommand() {
         JSONObject command = new JSONObject();
@@ -36,6 +38,26 @@ public class Coordinator {
                 System.out.println("Start poruka poslana na partition " + metadata.partition());
             }
         });
+    }
+
+    public void sendRegisterMessage(String nodeId) {
+        JSONObject register = new JSONObject();
+        register.put("type", "Register");
+        register.put("nodeId", nodeId);
+        register.put("timestamp", System.currentTimeMillis());
+
+        ProducerRecord<String, String> record =
+                new ProducerRecord<>(REGISTER_TOPIC, register.toString());
+
+        producer.send(record, (metadata, exception) -> {
+            if (exception != null) {
+                System.err.println("Greška pri slanju Register: " + exception.getMessage());
+            }
+            else {
+                System.out.println("Register poruka poslana na partition " + metadata.partition());
+            }
+        });
+
     }
 
     public void sendStopCommand() {
@@ -65,7 +87,7 @@ public class Coordinator {
         System.out.println("Šaljem Start...");
         coordinator.sendStartCommand();
 
-        // Čekaj npr. 30 sekundi da senzori rade
+        // Čekaj  30 sekundi da senzori prorade
         Thread.sleep(30_000);
 
         System.out.println("Šaljem Stop i gasim se...");
