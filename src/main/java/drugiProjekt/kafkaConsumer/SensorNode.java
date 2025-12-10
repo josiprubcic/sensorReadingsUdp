@@ -1,6 +1,7 @@
 package drugiProjekt.kafkaConsumer;
 
 import drugiProjekt.client.StupidUDPClient;
+import drugiProjekt.network.EmulatedSystemClock;
 import drugiProjekt.server.StupidUDPServer;
 import drugiProjekt.model.Peer;
 
@@ -11,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+import drugiProjekt.service.SensorReadingService;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -23,6 +25,8 @@ import org.json.JSONObject;
 import static java.util.Arrays.asList;
 
 public class SensorNode {
+    private SensorReadingService readingService;
+    private EmulatedSystemClock emulatedClock;
 
     private volatile boolean shutdownRequested = false;
     private static final String[] TOPICS = {"Command", "Register"};
@@ -37,9 +41,10 @@ public class SensorNode {
     private KafkaConsumer<String, String> consumer;
 
     //konstruktor koji postavlja sensorId i udpPort na SensorNode, te kreira udpServer/klijent instance
-    public SensorNode(String sensorId, int udpPort) throws SocketException {
+    public SensorNode(String sensorId, int udpPort) throws IOException {
         this.sensorId = sensorId;
         this.udpPort = udpPort;
+        this.readingService = new SensorReadingService("readings.csv");
         this.udpServer = new StupidUDPServer(udpPort);
         this.udpClient = new StupidUDPClient();
         initProducer();
@@ -123,9 +128,22 @@ public class SensorNode {
                                             synchronized (peers) {
                                                 snapshot = new ArrayList<>(peers);
                                             }
-                                            for (Peer p : snapshot) {
-                                                String message = "hello from " + sensorId;
-                                                udpClient.send(message, p.getAddress(), p.getPort());
+                                            // Dohvati NO2 očitanje
+                                            Double no2 = readingService.getNo2Reading();
+
+                                            if (no2 != null) {
+                                                // Kreiraj jednostavan JSON paket
+                                                JSONObject dataPacket = new JSONObject();
+                                                dataPacket.put("sensorId", sensorId);
+                                                dataPacket.put("no2", no2);
+
+                                                // Pošalji svim peer-ima
+                                                for (Peer p : snapshot) {
+                                                    udpClient.send(dataPacket.toString(), p.getAddress(), p.getPort());
+                                                    System.out.println("Sensor " + sensorId + " poslao NO2=" + no2 + " na " + p.getId());
+                                                }
+                                            } else {
+                                                System.out.println("Sensor " + sensorId + " nema NO2 očitanje za ovaj trenutak");
                                             }
                                             Thread.sleep(1000);
                                         } catch (Exception e) {
@@ -203,7 +221,7 @@ public class SensorNode {
         }
     }
 
-    public static void main(String[] args) throws SocketException {
+    public static void main(String[] args) throws IOException {
         if (args.length < 2) {
             System.err.println("Usage: java SensorNode <id> <port>");
             System.exit(1);
