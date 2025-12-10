@@ -4,12 +4,14 @@
  */
 package drugiProjekt.server;
 
+import drugiProjekt.kafkaConsumer.SensorNode;
 import drugiProjekt.network.SimpleSimulatedDatagramSocket;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.SocketException;
 import java.nio.channels.AsynchronousCloseException;
+import java.nio.channels.ClosedChannelException;
 
 /**
  * @author Krešimir Pripužić
@@ -18,9 +20,11 @@ public class StupidUDPServer {
 
     private final int port;
     private final SimpleSimulatedDatagramSocket socket;
+    private final SensorNode sensorNode;
 
-    public StupidUDPServer(int port) throws SocketException {
+    public StupidUDPServer(int port, SensorNode sensorNode) throws SocketException {
         this.port = port;
+        this.sensorNode = sensorNode;
         // 30% loss, 1000 ms delay – prema zadatku
         this.socket = new SimpleSimulatedDatagramSocket(port, 0.3, 1000);
     }
@@ -38,13 +42,14 @@ public class StupidUDPServer {
                         packet.getOffset(),
                         packet.getLength());
                 System.out.println("Server received on " + port + ": " + msg);
-                // ovdje kasnije parsirati očitanja
+
+                sensorNode.processReceivedPacket(msg);
 
             } catch (AsynchronousCloseException e) {
                 System.out.println("UDP server na portu " + port + " se gasi (AsynchronousCloseException)");
                 break;
 
-            } catch (java.nio.channels.ClosedChannelException e) {
+            } catch (ClosedChannelException e) {
                 System.out.println("UDP server na portu " + port + " se gasi (ClosedChannelException)");
                 break;
 
@@ -67,7 +72,5 @@ public class StupidUDPServer {
 
 
     public static void main(String[] args) throws Exception {
-        StupidUDPServer server = new StupidUDPServer(10001);
-        server.start();
     }
 }

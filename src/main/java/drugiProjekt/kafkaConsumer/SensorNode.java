@@ -2,11 +2,11 @@ package drugiProjekt.kafkaConsumer;
 
 import drugiProjekt.client.StupidUDPClient;
 import drugiProjekt.network.EmulatedSystemClock;
+import drugiProjekt.network.VectorClock;
 import drugiProjekt.server.StupidUDPServer;
 import drugiProjekt.model.Peer;
 
 import java.io.IOException;
-import java.net.SocketException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +27,7 @@ import static java.util.Arrays.asList;
 public class SensorNode {
     private SensorReadingService readingService;
     private EmulatedSystemClock emulatedClock;
+    private VectorClock vectorClock;
 
     private volatile boolean shutdownRequested = false;
     private static final String[] TOPICS = {"Command", "Register"};
@@ -44,8 +45,10 @@ public class SensorNode {
     public SensorNode(String sensorId, int udpPort) throws IOException {
         this.sensorId = sensorId;
         this.udpPort = udpPort;
+        this.emulatedClock = new EmulatedSystemClock();
+        this.vectorClock = new VectorClock(sensorId);
         this.readingService = new SensorReadingService("readings.csv");
-        this.udpServer = new StupidUDPServer(udpPort);
+        this.udpServer = new StupidUDPServer(udpPort, this);
         this.udpClient = new StupidUDPClient();
         initProducer();
     }
@@ -132,15 +135,24 @@ public class SensorNode {
                                             Double no2 = readingService.getNo2Reading();
 
                                             if (no2 != null) {
-                                                // Kreiraj jednostavan JSON paket
+                                                //inkrement vektorskog sata prije slanja
+                                                vectorClock.increment();
+                                                // Kreiranje JSON objekta
                                                 JSONObject dataPacket = new JSONObject();
                                                 dataPacket.put("sensorId", sensorId);
                                                 dataPacket.put("no2", no2);
 
+                                                //Dodavanje skalarne oznake
+                                                long scalarTime = emulatedClock.currentTimeMillis();
+                                                dataPacket.put("scalarTime", scalarTime);
+                                                //Dodavanje vektorske oznake
+                                                dataPacket.put("vectorClock", vectorClock.toJson());
+
                                                 // Pošalji svim peer-ima
                                                 for (Peer p : snapshot) {
                                                     udpClient.send(dataPacket.toString(), p.getAddress(), p.getPort());
-                                                    System.out.println("Sensor " + sensorId + " poslao NO2=" + no2 + " na " + p.getId());
+                                                    System.out.println("Sensor " + sensorId + " poslao NO2=" + no2
+                                                            + " scalar=" + scalarTime + " vector=" + vectorClock + " na " + p.getId());
                                                 }
                                             } else {
                                                 System.out.println("Sensor " + sensorId + " nema NO2 očitanje za ovaj trenutak");
@@ -181,6 +193,26 @@ public class SensorNode {
             }
         } finally {
             kafkaCleanup();
+        }
+    }
+
+    /**
+     * Procesira primljeni UDP paket i ažurira vektorski sat.
+     * Poziva se iz UDP servera.
+     */
+    public void processReceivedPacket(String message) {
+        try {
+            JSONObject packet = new JSONObject(message);
+
+            // Ako paket sadrži vektorski sat, ažuriraj ga
+            if (packet.has("vectorClock")) {
+                vectorClock.update(packet.getJSONObject("vectorClock"));
+            }
+
+            // TODO: Spremi očitanje za kasniju obradu (5.7 - sortiranje)
+
+        } catch (Exception e) {
+            System.out.println("Greška pri procesiranju paketa: " + e.getMessage());
         }
     }
 
