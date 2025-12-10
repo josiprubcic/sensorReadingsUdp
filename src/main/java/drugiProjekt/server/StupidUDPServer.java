@@ -5,56 +5,69 @@
 package drugiProjekt.server;
 
 import drugiProjekt.network.SimpleSimulatedDatagramSocket;
+
 import java.io.IOException;
 import java.net.DatagramPacket;
-import java.net.DatagramSocket;
+import java.net.SocketException;
+import java.nio.channels.AsynchronousCloseException;
 
 /**
- *
- * @author Krešimir Pripužić <kresimir.pripuzic@fer.hr>
+ * @author Krešimir Pripužić
  */
 public class StupidUDPServer {
 
-    static final int PORT = 10001; // server port
+    private final int port;
+    private final SimpleSimulatedDatagramSocket socket;
 
-    /**
-     * @param args the command line arguments
-     */
-    public static void main(String args[]) throws IOException {
+    public StupidUDPServer(int port) throws SocketException {
+        this.port = port;
+        // 30% loss, 1000 ms delay – prema zadatku
+        this.socket = new SimpleSimulatedDatagramSocket(port, 0.3, 1000);
+    }
 
-        byte[] rcvBuf = new byte[256]; // received bytes
-        byte[] sendBuf = new byte[256];// sent bytes
-        String rcvStr;
+    public void start() {
+        System.out.println("UDP server start na portu " + port);
+        byte[] rcvBuf = new byte[256];
 
-        // create a UDP socket and bind it to the specified port on the local
-        // host
-        DatagramSocket socket = new SimpleSimulatedDatagramSocket(PORT, 0.2, 200); //SOCKET -> BIND
+        while (true) {
+            try {
+                DatagramPacket packet = new DatagramPacket(rcvBuf, rcvBuf.length);
+                socket.receive(packet);   // blokira dok ne dođe paket ili se socket ne zatvori
 
-        while (true) { //OBRADA ZAHTJEVA
-            // create a DatagramPacket for receiving packets
-            DatagramPacket packet = new DatagramPacket(rcvBuf, rcvBuf.length);
+                String msg = new String(packet.getData(),
+                        packet.getOffset(),
+                        packet.getLength());
+                System.out.println("Server received on " + port + ": " + msg);
+                // ovdje kasnije parsirati očitanja
 
-            // receive packet
-            socket.receive(packet); //RECVFROM
+            } catch (AsynchronousCloseException e) {
+                System.out.println("UDP server na portu " + port + " se gasi (AsynchronousCloseException)");
+                break;
 
-            // construct a new String by decoding the specified subarray of
-            // bytes
-            // using the platform's default charset
-            rcvStr = new String(packet.getData(), packet.getOffset(),
-                    packet.getLength());
-            System.out.println("Server received: " + rcvStr);
+            } catch (java.nio.channels.ClosedChannelException e) {
+                System.out.println("UDP server na portu " + port + " se gasi (ClosedChannelException)");
+                break;
 
-            // encode a String into a sequence of bytes using the platform's
-            // default charset
-            sendBuf = rcvStr.toUpperCase().getBytes();
-            System.out.println("Server sends: " + rcvStr.toUpperCase());
-
-            // create a DatagramPacket for sending packets
-            DatagramPacket sendPacket = new DatagramPacket(sendBuf,
-                    sendBuf.length, packet.getAddress(), packet.getPort());
-
-            // send packet
-            socket.send(sendPacket); //SENDTO
+            } catch (IOException e) {
+                System.out.println("UDP server na portu " + port + " I/O greška: "
+                        + e.getClass().getSimpleName() + " - " + e.getMessage());
+                break;
+            }
         }
+    }
+
+
+
+
+
+
+    public void close(){
+        socket.close();
+    }
+
+
+    public static void main(String[] args) throws Exception {
+        StupidUDPServer server = new StupidUDPServer(10001);
+        server.start();
     }
 }

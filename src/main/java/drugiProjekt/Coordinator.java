@@ -52,8 +52,7 @@ public class Coordinator {
         producer.send(record, (metadata, exception) -> {
             if (exception != null) {
                 System.err.println("Greška pri slanju Register: " + exception.getMessage());
-            }
-            else {
+            } else {
                 System.out.println("Register poruka poslana na partition " + metadata.partition());
             }
         });
@@ -78,20 +77,23 @@ public class Coordinator {
     }
 
     public void close() {
-        producer.close();
+        producer.close(java.time.Duration.ofSeconds(5));  // ✅ timeout
     }
 
     public static void main(String[] args) throws InterruptedException {
         Coordinator coordinator = new Coordinator();
-
         System.out.println("Šaljem Start...");
         coordinator.sendStartCommand();
 
-        // Čekaj  30 sekundi da senzori prorade
+        // Čekaj 30 sekundi da senzori prorade
         Thread.sleep(30_000);
 
         System.out.println("Šaljem Stop i gasim se...");
         coordinator.sendStopCommand();
+
+        // ✅ DODAJ OVO: čekaj da Stop poruka stvarno stigne
+        Thread.sleep(2000);
+
         coordinator.close();
     }
 }

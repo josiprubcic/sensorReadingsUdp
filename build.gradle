@@ -25,6 +25,25 @@ application {
     mainClass = 'drugiProjekt.Coordinator'
 }
 
+tasks.register('runCoordinator', JavaExec) {
+    group = 'application'
+    description = 'Pokreće Coordinator'
+    mainClass = 'drugiProjekt.Coordinator'
+    classpath = sourceSets.main.runtimeClasspath
+    standardInput = System.in
+}
+
+tasks.register('runSensor', JavaExec) {
+    group = 'application'
+    description = 'Pokreće SensorNode s argumentima -Pargs="id port"'
+    mainClass = 'drugiProjekt.kafkaConsumer.SensorNode'
+    classpath = sourceSets.main.runtimeClasspath
+
+    if (project.hasProperty('args')) {
+        args project.property('args').split()
+    }
+}
+
 test {
     useJUnitPlatform()
 }
