@@ -15,6 +15,7 @@ public class SensorReadingService {
     private long startTime;
     private static final int NO2_COLUMN_INDEX = 4; // NO2 je 5. stupac (Temperature,Pressure,Humidity,CO,NO2,SO2)
 
+    //konstruktor koji prima ime CSV Filea (readings.csv)
     public SensorReadingService(String csvFileName) throws IOException {
         InputStream inputStream = getClass().getClassLoader().getResourceAsStream(csvFileName);
 
@@ -37,6 +38,7 @@ public class SensorReadingService {
     }
 
     public Double getNo2Reading() {
+        //trenutno vrijeme zahtjeva za očitanjem
         long currentTime = System.currentTimeMillis();
         int brojAktivnihSekundi = (int) ((currentTime - startTime) / 1000);
         int rowIndex = (brojAktivnihSekundi % 100);
@@ -45,6 +47,7 @@ public class SensorReadingService {
             CSVRecord record = records.get(rowIndex);
 
             //Koristi indeks, ne ime stupca
+            //izbjegavanje Out of bounds greske
             if (record.size() > NO2_COLUMN_INDEX) {
                 String no2Value = record.get(NO2_COLUMN_INDEX).trim();
 

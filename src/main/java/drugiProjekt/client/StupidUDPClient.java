@@ -24,8 +24,7 @@ public class StupidUDPClient {
                 new DatagramPacket(sendBuf, sendBuf.length, inetAddress, port);
 
         socket.send(packet);  // SENDTO
-        System.out.println("UDP klijent poslao: \"" + message +
-                "\" na " + address + ":" + port);
+
     }
 
     public void close() {

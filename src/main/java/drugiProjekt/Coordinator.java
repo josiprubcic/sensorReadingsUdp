@@ -9,7 +9,6 @@ import java.util.Scanner;
 public class Coordinator {
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
     private static final String COMMAND_TOPIC = "Command";
-    private static final String REGISTER_TOPIC = "Register";
 
     private KafkaProducer<String, String> producer;
 
@@ -40,24 +39,6 @@ public class Coordinator {
         });
     }
 
-    public void sendRegisterMessage(String nodeId) {
-        JSONObject register = new JSONObject();
-        register.put("type", "Register");
-        register.put("nodeId", nodeId);
-        register.put("timestamp", System.currentTimeMillis());
-
-        ProducerRecord<String, String> record =
-                new ProducerRecord<>(REGISTER_TOPIC, register.toString());
-
-        producer.send(record, (metadata, exception) -> {
-            if (exception != null) {
-                System.err.println("Greška pri slanju Register: " + exception.getMessage());
-            } else {
-                System.out.println("Register poruka poslana na partition " + metadata.partition());
-            }
-        });
-
-    }
 
     public void sendStopCommand() {
         JSONObject command = new JSONObject();
@@ -91,7 +72,7 @@ public class Coordinator {
         System.out.println("Šaljem Stop i gasim se...");
         coordinator.sendStopCommand();
 
-        // ✅ DODAJ OVO: čekaj da Stop poruka stvarno stigne
+        //Čekanje da Stop poruka stvarno stigne
         Thread.sleep(2000);
 
         coordinator.close();

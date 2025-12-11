@@ -41,7 +41,7 @@ public class StupidUDPServer {
                 String msg = new String(packet.getData(),
                         packet.getOffset(),
                         packet.getLength());
-                System.out.println("Server received on " + port + ": " + msg);
+
 
                 sensorNode.processReceivedPacket(msg);
 

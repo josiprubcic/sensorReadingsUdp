@@ -1,7 +1,10 @@
 package drugiProjekt.kafkaConsumer;
 
 import drugiProjekt.client.StupidUDPClient;
+import drugiProjekt.model.DataPacket;
+import drugiProjekt.network.AckManager;
 import drugiProjekt.network.EmulatedSystemClock;
+import drugiProjekt.network.MessageHandler;
 import drugiProjekt.network.VectorClock;
 import drugiProjekt.server.StupidUDPServer;
 import drugiProjekt.model.Peer;
@@ -28,6 +31,8 @@ public class SensorNode {
     private SensorReadingService readingService;
     private EmulatedSystemClock emulatedClock;
     private VectorClock vectorClock;
+    private AckManager ackManager;
+    private MessageHandler messageHandler;
 
     private volatile boolean shutdownRequested = false;
     private static final String[] TOPICS = {"Command", "Register"};
@@ -50,6 +55,10 @@ public class SensorNode {
         this.readingService = new SensorReadingService("readings.csv");
         this.udpServer = new StupidUDPServer(udpPort, this);
         this.udpClient = new StupidUDPClient();
+        this.ackManager = new AckManager(udpClient, sensorId);
+        this.messageHandler = new MessageHandler(udpClient, vectorClock, sensorId, peers);
+
+        // postavlja konfiguraciju i kreira KafkaProducer instancu
         initProducer();
     }
 
@@ -76,17 +85,12 @@ public class SensorNode {
         json.put("address", "localhost");
         json.put("port", String.valueOf(port));
 
+        //producer je inicijaliziran prethodno u konstruktoru metodom initProducer();
         producer.send(new ProducerRecord<>(REGISTER_TOPIC, sensorId, json.toString()));
         System.out.println("Sensor " + sensorId + " poslao Register poruku");
     }
-    /**
-     * Glavna petlja senzora:
-     * 1. Inicijalizira Kafka consumera i pretplaćuje se na "Command" i "Register" topice
-     * 2. Čeka "Start" poruku od koordinatora
-     * 3. Nakon "Start", pokreće UDP server i započinje slanje očitanja
-     * 4. Na "Stop" poruku zaustavlja sve komponente
-     */
-    private void run() {
+
+    private KafkaConsumer<String, String> initConsumer() {
         Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "sensor-group-" + sensorId);
@@ -96,15 +100,25 @@ public class SensorNode {
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
         props.put(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG, "30000");
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, "10");
+        return new KafkaConsumer<>(props);
+    }
 
-
-        consumer = new KafkaConsumer<>(props);
+    /**
+     * Glavna petlja senzora:
+     * 1. Inicijalizira Kafka consumera i pretplaćuje se na "Command" i "Register" topice
+     * 2. Čeka "Start" poruku od koordinatora
+     * 3. Nakon "Start", pokreće UDP server i započinje slanje očitanja
+     * 4. Na "Stop" poruku zaustavlja sve komponente
+     */
+    private void run() {
+        consumer = initConsumer();
         consumer.subscribe(asList(TOPICS));
 
         System.out.println("Sensor " + sensorId + " sluša Command + Register");
 
         try {
             while (!shutdownRequested) {
+                //svakih 100 ms provjeri kafka poruke
                 var records = consumer.poll(Duration.ofMillis(100));
                 for (var record : records) {
                     String topic = record.topic();
@@ -122,12 +136,14 @@ public class SensorNode {
 
 
                                 new Thread(() -> udpServer.start()).start();
+                                //senzor se registrira i uz registraciju veze svoj UDP port kako bi mogao primati UDP pakete
                                 sendRegister(udpPort);
 
                                 new Thread(() -> {
                                     while (!shutdownRequested) {
                                         try {
                                             List<Peer> snapshot;
+                                            //peers smije pristupati samo jedna dretva dok se izvršava proces
                                             synchronized (peers) {
                                                 snapshot = new ArrayList<>(peers);
                                             }
@@ -137,22 +153,26 @@ public class SensorNode {
                                             if (no2 != null) {
                                                 //inkrement vektorskog sata prije slanja
                                                 vectorClock.increment();
-                                                // Kreiranje JSON objekta
-                                                JSONObject dataPacket = new JSONObject();
-                                                dataPacket.put("sensorId", sensorId);
-                                                dataPacket.put("no2", no2);
+                                                // Kreiranje DataPacket objekta
+                                                DataPacket packet = new DataPacket(
+                                                        sensorId,
+                                                        no2,
+                                                        emulatedClock.currentTimeMillis(),
+                                                        vectorClock.toJson()
+                                                );
 
-                                                //Dodavanje skalarne oznake
-                                                long scalarTime = emulatedClock.currentTimeMillis();
-                                                dataPacket.put("scalarTime", scalarTime);
-                                                //Dodavanje vektorske oznake
-                                                dataPacket.put("vectorClock", vectorClock.toJson());
 
-                                                // Pošalji svim peer-ima
+                                                // Pošalji svim peerovima
                                                 for (Peer p : snapshot) {
-                                                    udpClient.send(dataPacket.toString(), p.getAddress(), p.getPort());
-                                                    System.out.println("Sensor " + sensorId + " poslao NO2=" + no2
-                                                            + " scalar=" + scalarTime + " vector=" + vectorClock + " na " + p.getId());
+                                                    ackManager.sendWithAck(packet, p);
+
+                                                    String shortId = packet.getMessageId().substring(0, 8);
+                                                    System.out.printf(
+                                                            "[→] S%s → S%s | NO2=%.0f | Vec:%s | ts=%d | #%s%n",
+                                                            sensorId, p.getId(), no2, vectorClock,
+                                                            packet.getScalarTime(),   // getter u DataPacket
+                                                            shortId
+                                                    );
                                                 }
                                             } else {
                                                 System.out.println("Sensor " + sensorId + " nema NO2 očitanje za ovaj trenutak");
@@ -182,8 +202,6 @@ public class SensorNode {
                                 }
                                 System.out.println("Sensor " + sensorId + " registrirao: id=" + id +
                                         ", address=" + address + ", port=" + port);
-                            } else {
-                                System.out.println("Sensor " + sensorId + " ignorira vlastitu Register poruku");
                             }
                         }
                     } catch (Exception e) {
@@ -202,14 +220,25 @@ public class SensorNode {
      */
     public void processReceivedPacket(String message) {
         try {
-            JSONObject packet = new JSONObject(message);
+            JSONObject json = new JSONObject(message);
+            DataPacket packet = new DataPacket(json);  // ← Parsiraj u DataPacket
 
-            // Ako paket sadrži vektorski sat, ažuriraj ga
-            if (packet.has("vectorClock")) {
-                vectorClock.update(packet.getJSONObject("vectorClock"));
+            if (packet.isData()) {
+                long recvTs  = packet.getScalarTime();
+                long localTs = emulatedClock.currentTimeMillis();
+
+                String shortId = packet.getMessageId().substring(0, 8);
+                System.out.printf(
+                        "[←] S%s ← S%s | NO2=%.0f | ts=%d (local=%d) | #%s%n",
+                        sensorId, packet.getSensorId(), packet.getNo2(),
+                        recvTs, localTs, shortId
+                );
+                messageHandler.handleDataPacket(packet);  //Delegiraj na handler
+            } else if (packet.isAck()) {
+                String shortId = packet.getMessageId().substring(0, 8);
+                System.out.printf("[✓] S%s ACK #%s%n", sensorId, shortId);
+                ackManager.confirmReceived(packet.getMessageId(), packet.getSensorId());  //Potvrdi ACK
             }
-
-            // TODO: Spremi očitanje za kasniju obradu (5.7 - sortiranje)
 
         } catch (Exception e) {
             System.out.println("Greška pri procesiranju paketa: " + e.getMessage());
@@ -219,6 +248,10 @@ public class SensorNode {
     private void stopEverything() {
         System.out.println("Sensor " + sensorId + " pokreće shutdown...");
         shutdownRequested = true;
+
+        if (ackManager != null) {
+            ackManager.shutdown();
+        }
 
         //Čekanje da svi UDP paketi u redu završe (1000ms delay + buffer)
         try {
