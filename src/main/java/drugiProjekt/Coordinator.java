@@ -4,10 +4,10 @@ import org.apache.kafka.clients.producer.*;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.json.JSONObject;
 import java.util.Properties;
-import java.util.Scanner;
 
 public class Coordinator {
     private static final String BOOTSTRAP_SERVERS = "localhost:9092";
+    //kafka koordinator šalje na Command topic
     private static final String COMMAND_TOPIC = "Command";
 
     private KafkaProducer<String, String> producer;
@@ -58,7 +58,7 @@ public class Coordinator {
     }
 
     public void close() {
-        producer.close(java.time.Duration.ofSeconds(5));  // ✅ timeout
+        producer.close(java.time.Duration.ofSeconds(5));  //timeout
     }
 
     public static void main(String[] args) throws InterruptedException {
@@ -66,8 +66,8 @@ public class Coordinator {
         System.out.println("Šaljem Start...");
         coordinator.sendStartCommand();
 
-        // Čekaj 30 sekundi da senzori prorade
-        Thread.sleep(30_000);
+        //Senzori rade 50 sekundi dok se ne pošalje stop
+        Thread.sleep(50_000);
 
         System.out.println("Šaljem Stop i gasim se...");
         coordinator.sendStopCommand();

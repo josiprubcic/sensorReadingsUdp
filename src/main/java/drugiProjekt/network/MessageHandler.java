@@ -19,13 +19,15 @@ public class MessageHandler {
     private final VectorClock vectorClock;
     private final String sensorId;
     private final List<Peer> peers;
+    private final List<DataPacket> readings;
 
     public MessageHandler(StupidUDPClient udpClient, VectorClock vectorClock,
-                          String sensorId, List<Peer> peers) {
+                          String sensorId, List<Peer> peers, List<DataPacket> readings) {
         this.udpClient = udpClient;
         this.vectorClock = vectorClock;
         this.sensorId = sensorId;
         this.peers = peers;
+        this.readings = readings;
     }
 
     /**
@@ -39,7 +41,7 @@ public class MessageHandler {
         if (receivedMessages.contains(messageId)) {
             //Ako je duplikat radi se samo log i ponovno se pošalje ACK da pošiljatelj makne tu poruku iz pending ACKs
             String shortId = messageId.substring(0, 8);
-            System.out.printf("[DUPL] S%s ← #%s%n", sensorId, shortId);
+            System.out.printf("[DUPLIKAT] S%s <- #%s%n", sensorId, shortId);
             sendAck(messageId, senderId);
             return;
         }
@@ -50,10 +52,10 @@ public class MessageHandler {
         // Ažuriraj vektorski sat
         vectorClock.update(packet.getVectorClock());
 
-
-
-        // TODO: Spremi podatak za sortiranje kasnije
-
+        //Umeće u readings listu, za kasnije sortiranje očitanja
+        synchronized (readings) {
+            readings.add(packet);
+        }
         // Pošalji ACK
         sendAck(messageId, senderId);
     }
@@ -62,7 +64,8 @@ public class MessageHandler {
      * Šalje ACK potvrdu
      */
     private void sendAck(String messageId, String targetSensorId) {
-        DataPacket ackPacket = new DataPacket(messageId);  // ACK constructor
+        //DataPacket stvara novi paket, bez nebitnih informacija, s ACKom
+        DataPacket ackPacket = new DataPacket(messageId, sensorId);  // ACK konstruktor
 
         Peer targetPeer = findPeerById(targetSensorId);
         if (targetPeer != null) {

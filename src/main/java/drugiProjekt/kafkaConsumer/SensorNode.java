@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 
+
 import drugiProjekt.service.SensorReadingService;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -28,6 +29,8 @@ import org.json.JSONObject;
 import static java.util.Arrays.asList;
 
 public class SensorNode {
+    private final List<DataPacket> readings = new ArrayList<>();
+    private long lastSortTime = 0;
     private SensorReadingService readingService;
     private EmulatedSystemClock emulatedClock;
     private VectorClock vectorClock;
@@ -46,7 +49,17 @@ public class SensorNode {
     private KafkaProducer<String, String> producer;
     private KafkaConsumer<String, String> consumer;
 
-    //konstruktor koji postavlja sensorId i udpPort na SensorNode, te kreira udpServer/klijent instance
+    /**konstruktor
+     * kreira i inicijalizira sensor sa sensorId i udpPortom
+     * pokreće emulatedClock senzora
+     * pokreće VectorClosk senzora
+     * pokreće readingService i učitava u njega readings.csv
+     * pokrece udpServer senzora - preko njega klijent senzor prima pakete
+     * pokrece udpClient senzora - preko njega klijent šalje očitanja NO2
+     * pokreće ackManagera - brine se da podaci uistinu stignu, vrši retransmisiju
+     * pokreće messageHandler
+     * postavlja zadnje vrijeme sortiranja preko emulatedClocka
+     */
     public SensorNode(String sensorId, int udpPort) throws IOException {
         this.sensorId = sensorId;
         this.udpPort = udpPort;
@@ -56,8 +69,8 @@ public class SensorNode {
         this.udpServer = new StupidUDPServer(udpPort, this);
         this.udpClient = new StupidUDPClient();
         this.ackManager = new AckManager(udpClient, sensorId);
-        this.messageHandler = new MessageHandler(udpClient, vectorClock, sensorId, peers);
-
+        this.messageHandler = new MessageHandler(udpClient, vectorClock, sensorId, peers, this.readings);
+        this.lastSortTime = emulatedClock.currentTimeMillis();
         // postavlja konfiguraciju i kreira KafkaProducer instancu
         initProducer();
     }
@@ -107,7 +120,7 @@ public class SensorNode {
      * Glavna petlja senzora:
      * 1. Inicijalizira Kafka consumera i pretplaćuje se na "Command" i "Register" topice
      * 2. Čeka "Start" poruku od koordinatora
-     * 3. Nakon "Start", pokreće UDP server i započinje slanje očitanja
+     * 3. Nakon "Start", registrira se, pokreće UDP server i započinje slanje očitanja
      * 4. Na "Stop" poruku zaustavlja sve komponente
      */
     private void run() {
@@ -142,6 +155,7 @@ public class SensorNode {
                                 new Thread(() -> {
                                     while (!shutdownRequested) {
                                         try {
+                                            //lista snapshot za svaku dretvu
                                             List<Peer> snapshot;
                                             //peers smije pristupati samo jedna dretva dok se izvršava proces
                                             synchronized (peers) {
@@ -153,7 +167,7 @@ public class SensorNode {
                                             if (no2 != null) {
                                                 //inkrement vektorskog sata prije slanja
                                                 vectorClock.increment();
-                                                // Kreiranje DataPacket objekta
+                                                // Kreiranje DataPacket objekta tipa DATA
                                                 DataPacket packet = new DataPacket(
                                                         sensorId,
                                                         no2,
@@ -161,21 +175,30 @@ public class SensorNode {
                                                         vectorClock.toJson()
                                                 );
 
-
-                                                // Pošalji svim peerovima
+                                                synchronized (readings) {
+                                                    readings.add(packet);
+                                                }
+                                                // Pošalji svim peerovima prethodno kreiran paket, s ACKom
                                                 for (Peer p : snapshot) {
                                                     ackManager.sendWithAck(packet, p);
 
                                                     String shortId = packet.getMessageId().substring(0, 8);
                                                     System.out.printf(
-                                                            "[→] S%s → S%s | NO2=%.0f | Vec:%s | ts=%d | #%s%n",
+                                                            "[->] S%s -> S%s | NO2=%.0f | Vec:%s | ts=%d | #%s%n",
                                                             sensorId, p.getId(), no2, vectorClock,
                                                             packet.getScalarTime(),   // getter u DataPacket
                                                             shortId
                                                     );
                                                 }
+
+
                                             } else {
                                                 System.out.println("Sensor " + sensorId + " nema NO2 očitanje za ovaj trenutak");
+                                            }
+                                            long now = System.currentTimeMillis();
+                                            if (now - lastSortTime >= 5000) {
+                                                sortAndPrintReadings();
+                                                lastSortTime = now;
                                             }
                                             Thread.sleep(1000);
                                         } catch (Exception e) {
@@ -215,35 +238,109 @@ public class SensorNode {
     }
 
     /**
-     * Procesira primljeni UDP paket i ažurira vektorski sat.
+     * Procesira primljeni UDP paket i ažurira vektorski i skalarni sat.
      * Poziva se iz UDP servera.
      */
     public void processReceivedPacket(String message) {
         try {
+            //System.out.println("RAW UDP: " + message);
             JSONObject json = new JSONObject(message);
-            DataPacket packet = new DataPacket(json);  // ← Parsiraj u DataPacket
+            DataPacket packet = new DataPacket(json);  //Parsiranje u DataPacket
 
             if (packet.isData()) {
                 long recvTs  = packet.getScalarTime();
                 long localTs = emulatedClock.currentTimeMillis();
 
+                //Sinkronizacija emuliranog skalarnog sata senzora
+                long adjusted = emulatedClock.syncWith(packet.getScalarTime());
+
+
+
+
+
                 String shortId = packet.getMessageId().substring(0, 8);
                 System.out.printf(
-                        "[←] S%s ← S%s | NO2=%.0f | ts=%d (local=%d) | #%s%n",
+                        "[<-] S%s <- S%s | NO2=%.0f | ts=%d (local=%d -> adj=%d) | #%s%n",
                         sensorId, packet.getSensorId(), packet.getNo2(),
-                        recvTs, localTs, shortId
+                        recvTs, localTs, adjusted, shortId
                 );
+
+
+
                 messageHandler.handleDataPacket(packet);  //Delegiraj na handler
+                //Handler šalje ACK
             } else if (packet.isAck()) {
-                String shortId = packet.getMessageId().substring(0, 8);
-                System.out.printf("[✓] S%s ACK #%s%n", sensorId, shortId);
-                ackManager.confirmReceived(packet.getMessageId(), packet.getSensorId());  //Potvrdi ACK
+                //potvrdi ack
+                //System.out.println("*** ACK STIGAO: " + packet.getMessageId());
+               // System.out.println("Ključ: " + packet.getMessageId() + packet.getSensorId());
+                boolean removed = ackManager.confirmReceived(packet.getMessageId(), packet.getSensorId());
+                if (removed) {
+                    String shortId = packet.getMessageId().substring(0, 8);
+                    System.out.printf("[USPJEŠNO] S%s ACK #%s%n", sensorId, shortId);
+                }
+
+
             }
 
         } catch (Exception e) {
             System.out.println("Greška pri procesiranju paketa: " + e.getMessage());
         }
     }
+
+    private void sortAndPrintReadings() {
+
+     //   debugReadings("before window");
+        long now = emulatedClock.currentTimeMillis();
+
+        List<DataPacket> window;
+        synchronized (readings) {
+            window = readings.stream()
+                    .filter(p -> p.getScalarTime() != null && now - p.getScalarTime() <= 5000)
+                    .toList();
+        }
+       // System.out.println("DEBUG " + sensorId + " window size=" + window.size());
+
+        if (window.isEmpty()) {
+            System.out.println("Sensor " + sensorId + " nema očitanja u zadnjih 5s.");
+            return;
+        }
+
+        //Sort po SKALARNOM vremenu
+        List<DataPacket> byScalar = new ArrayList<>(window);
+        byScalar.sort((a, b) -> Long.compare(a.getScalarTime(), b.getScalarTime()));
+
+        System.out.println("=== S" + sensorId + " SORT SKALAR ===");
+        for (DataPacket p : byScalar) {
+            System.out.printf("S%s NO2=%.0f ts=%d id=%s%n",
+                    p.getSensorId(), p.getNo2(), p.getScalarTime(),
+                    p.getMessageId().substring(0, 8));
+        }
+
+        //Sort po VEKTORSKOM vremenu – koristi VectorClock.compareTo
+        List<DataPacket> byVector = new ArrayList<>(window);
+        byVector.sort((a, b) -> {
+            VectorClock va = new VectorClock(sensorId);
+            va.update(a.getVectorClock());
+            VectorClock vb = new VectorClock(sensorId);
+            vb.update(b.getVectorClock());
+            return va.compareTo(vb);
+        });
+
+        System.out.println("=== S" + sensorId + " SORT VEKTOR ===");
+        for (DataPacket p : byVector) {
+            System.out.printf("S%s NO2=%.0f Vec=%s id=%s%n",
+                    p.getSensorId(), p.getNo2(), p.getVectorClock(),
+                    p.getMessageId().substring(0, 8));
+        }
+
+        double avg = window.stream()
+                .mapToDouble(DataPacket::getNo2)
+                .average()
+                .orElse(0.0);
+        System.out.printf("S%s PROSJEČNO NO2 u zadnjih 5s: %.2f (n=%d)%n",
+                sensorId, avg, window.size());
+    }
+
 
     private void stopEverything() {
         System.out.println("Sensor " + sensorId + " pokreće shutdown...");
@@ -283,6 +380,19 @@ public class SensorNode {
             } catch (Exception e) {
                 System.out.println("Consumer greška: " + e.getMessage());
             }
+        }
+    }
+
+    private void debugReadings(String where) {
+        synchronized (readings) {
+            System.out.println("DEBUG " + sensorId + " [" + where + "] readings.size=" + readings.size());
+            readings.stream()
+                    .limit(5)
+                    .forEach(p -> System.out.printf(
+                            "  NO2=%.0f ts=%d from=%s id=%s%n",
+                            p.getNo2(), p.getScalarTime(), p.getSensorId(),
+                            p.getMessageId().substring(0, 8)
+                    ));
         }
     }
 

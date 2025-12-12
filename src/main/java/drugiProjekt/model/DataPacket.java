@@ -11,11 +11,12 @@ public class DataPacket {
     private final String sensorId;
     private final String type;  // "DATA" ili "ACK"
     private final Double no2;
-    private final Long scalarTime;
+    private Long scalarTime;
     private final JSONObject vectorClock;
 
-    // Constructor za DATA paket
+    //Konstruktor za DATA paket
     public DataPacket(String sensorId, Double no2, Long scalarTime, JSONObject vectorClock) {
+        //kreira UUID za message id
         this.messageId = UUID.randomUUID().toString();
         this.type = "DATA";
         this.sensorId = sensorId;
@@ -24,11 +25,12 @@ public class DataPacket {
         this.vectorClock = vectorClock;
     }
 
-    // Constructor za ACK paket
-    public DataPacket(String messageId) {
+    //Konstruktor za ACK paket
+    //Postavlja praktički sve na null jer je ACKu nebitan sadržaj
+    public DataPacket(String messageId, String sensorId) {
         this.messageId = messageId;
         this.type = "ACK";
-        this.sensorId = null;
+        this.sensorId = sensorId;
         this.no2 = null;
         this.scalarTime = null;
         this.vectorClock = null;
@@ -45,7 +47,7 @@ public class DataPacket {
             this.scalarTime = json.getLong("scalarTime");
             this.vectorClock = json.getJSONObject("vectorClock");
         } else {
-            this.sensorId = null;
+            this.sensorId = json.optString("sensorId", null);
             this.no2 = null;
             this.scalarTime = null;
             this.vectorClock = null;
@@ -56,6 +58,7 @@ public class DataPacket {
         JSONObject json = new JSONObject();
         json.put("type", type);
         json.put("messageId", messageId);
+        json.put("sensorId", sensorId);
 
         if ("DATA".equals(type)) {
             json.put("sensorId", sensorId);
@@ -74,6 +77,7 @@ public class DataPacket {
     public Double getNo2() { return no2; }
     public Long getScalarTime() { return scalarTime; }
     public JSONObject getVectorClock() { return vectorClock; }
+    public void setScalarTime(Long scalarTime) { this.scalarTime = scalarTime; }
 
     public boolean isData() { return "DATA".equals(type); }
     public boolean isAck() { return "ACK".equals(type); }

@@ -19,6 +19,7 @@ public class AckManager {
     private final StupidUDPClient udpClient;
     private final String sensorId;
 
+    //Vrijeme čekanja ACKa 2 sekunde
     private static final long ACK_TIMEOUT_MS = 2000;
     //maksimalan broj retransmisija
     private static final int MAX_RETRIES = 5;
@@ -41,6 +42,7 @@ public class AckManager {
         }
     }
 
+    //inicijalizira AckManager za jedan senzor i pali pozadinski thread koji se brine o retransmisiji
     public AckManager(StupidUDPClient udpClient, String sensorId) {
         this.udpClient = udpClient;
         this.sensorId = sensorId;
@@ -49,10 +51,11 @@ public class AckManager {
 
     /**
      * Šalje podatkovni paket i čeka ACK
+     * U pendingAcks stavlja novi key vezan za PendingMessage objekt
      */
     public void sendWithAck(DataPacket packet, Peer peer) {
         //key = id poruke + id senzora susjeda
-        String key = packet.getMessageId() + "_" + peer.getId();
+        String key = packet.getMessageId() +  peer.getId();
         pendingAcks.put(key, new PendingMessage(packet, peer));
 
         try {
@@ -66,9 +69,11 @@ public class AckManager {
     /**
      * Potvrđuje primitak paketa (uklanja iz pending liste)
      */
-    public void confirmReceived(String messageId, String senderId) {
-        String exactKey = messageId + "_" + senderId;
-        pendingAcks.remove(exactKey);
+    public boolean confirmReceived(String messageId, String senderId) {
+        //exactKey mora odgovarati keyu is PendingAcks
+        String exactKey = messageId + senderId;
+        //vrati True ako je postojao i uklonjen je exactKey
+        return pendingAcks.remove(exactKey) != null;
     }
 
     /**
@@ -95,11 +100,13 @@ public class AckManager {
 
                                 System.out.println("Sensor " + sensorId + " RETRANSMIT msgId=" +
                                         pending.packet.getMessageId() +
+                                        " -> " + pending.peer.getId() +
                                         " pokušaj " + pending.retryCount);
                             } else {
                                 // Premašen broj pokušaja
                                 System.err.println("Sensor " + sensorId + " FAILED msgId=" +
-                                        pending.packet.getMessageId());
+                                        pending.packet.getMessageId() +
+                                        " -> " + pending.peer.getId());
                                 pendingAcks.remove(entry.getKey());
                             }
                         }

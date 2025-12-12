@@ -23,7 +23,7 @@ public class SensorReadingService {
             throw new IOException("CSV datoteka nije pronađena u resources: " + csvFileName);
         }
 
-        //Preskači header i ignoriraj prazne redove
+        //Preskoči header i ignoriraj prazne redove
         CSVParser parser = CSVFormat.DEFAULT
                 .builder()
                 .setSkipHeaderRecord(true)
@@ -41,7 +41,7 @@ public class SensorReadingService {
         //trenutno vrijeme zahtjeva za očitanjem
         long currentTime = System.currentTimeMillis();
         int brojAktivnihSekundi = (int) ((currentTime - startTime) / 1000);
-        int rowIndex = (brojAktivnihSekundi % 100);
+        int rowIndex = (brojAktivnihSekundi % 100) ;
 
         if (rowIndex < records.size()) {
             CSVRecord record = records.get(rowIndex);
